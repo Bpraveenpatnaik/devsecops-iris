@@ -30,20 +30,43 @@ COLORS = {
 TEXT, MUTED, AXIS = "#0b0b0b", "#52514e", "#c3c2b7"
 
 
+SHORT_DESCRIPTION = re.compile(r"^(\S+) (\w+) vulnerability for (\S+) package")
+
+
+def optional_field(text, name):
+    match = re.search(rf"{name}: (.+)", text)
+    return match.group(1).strip() if match else "unknown"
+
+
 def parse(path):
+    """Return one dict per finding.
+
+    The rule's short description ("CVE-X Medium vulnerability for pkg package")
+    has the same shape in older Anchore reports and current Grype releases, so
+    the CVE, severity and package come from it. Version and fix details are in
+    the free-text help, which varies between releases, so they are optional.
+    """
     sarif = json.loads(Path(path).read_text())
     findings = []
     for run in sarif["runs"]:
-        rules = {r["id"]: r for r in run["tool"]["driver"]["rules"]}
+        rules = {r["id"]: r for r in run["tool"]["driver"].get("rules", [])}
         for result in run.get("results", []):
-            text = rules[result["ruleId"]]["help"]["text"]
-            field = lambda name: re.search(rf"{name}: (.+)", text).group(1).strip()
+            rule = rules.get(result["ruleId"], {})
+            short = rule.get("shortDescription", {}).get("text", "")
+            match = SHORT_DESCRIPTION.match(short)
+            if not match:
+                continue
+            cve, severity, package = match.groups()
+            severity = severity.capitalize()
+            if severity not in SEVERITIES:
+                severity = "Unknown"
+            help_text = rule.get("help", {}).get("text", "")
             findings.append({
-                "cve": re.match(r"Vulnerability (\S+)", text).group(1),
-                "severity": field("Severity"),
-                "package": field("Package"),
-                "version": field("Version"),
-                "fix": field("Fix Version"),
+                "cve": cve,
+                "severity": severity,
+                "package": package,
+                "version": optional_field(help_text, "Version"),
+                "fix": optional_field(help_text, "Fix Version"),
             })
     return findings
 
@@ -72,11 +95,11 @@ def write_chart(counts, out):
 
 
 def write_markdown(findings, counts, out, chart_name):
-    fixable = sum(f["fix"].lower() != "none" for f in findings)
+    fixable = sum(f["fix"].lower() not in ("none", "unknown", "") for f in findings)
     lines = [
         "# Container Scan Summary",
         "",
-        f"Anchore/Grype scan of the `python:3.8-slim`-based image: **{len(findings)} findings**, "
+        f"Anchore/Grype scan of the container image: **{len(findings)} findings**, "
         f"**{fixable} with a fix available**.",
         "",
         f"![Findings by severity]({chart_name})",
@@ -105,11 +128,16 @@ def write_markdown(findings, counts, out, chart_name):
     Path(out).write_text("\n".join(lines))
 
 
-if __name__ == "__main__":
-    sarif_path = Path(sys.argv[1] if len(sys.argv) > 1 else "reports/results.sarif")
+def main(sarif_path):
+    sarif_path = Path(sarif_path)
     findings = parse(sarif_path)
     counts = Counter(f["severity"] for f in findings)
     chart = sarif_path.parent / "sarif-severity.png"
-    write_chart(counts, chart)
+    if findings:
+        write_chart(counts, chart)
     write_markdown(findings, counts, sarif_path.parent / "SARIF_SUMMARY.md", chart.name)
-    print(dict(counts))
+    return counts
+
+
+if __name__ == "__main__":
+    print(dict(main(sys.argv[1] if len(sys.argv) > 1 else "reports/results.sarif")))

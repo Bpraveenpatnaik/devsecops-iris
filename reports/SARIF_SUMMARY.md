@@ -1,6 +1,6 @@
 # Container Scan Summary
 
-Anchore/Grype scan of the `python:3.8-slim`-based image: **72 findings**, **0 with a fix available**.
+Anchore/Grype scan of the container image: **72 findings**, **0 with a fix available**.
 
 ![Findings by severity](sarif-severity.png)
 
