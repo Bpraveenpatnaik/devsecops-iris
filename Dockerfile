@@ -1,15 +1,17 @@
-FROM python:3.8-slim
+FROM python:3.11-slim
 
 WORKDIR /app
-
-ENV PYTHONUNBUFFERED 1
-ENV DISPLAY=:99
-
-# Install apt dependencies
-RUN apt update
+ENV PYTHONUNBUFFERED=1
 
 # Install requirements
 COPY requirements.txt requirements.txt
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . /app
+COPY main.py ml_utils.py ./
+
+# run as a non-root user
+RUN useradd --create-home appuser
+USER appuser
+
+EXPOSE 8888
+CMD ["python", "main.py"]

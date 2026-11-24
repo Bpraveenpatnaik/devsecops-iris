@@ -1,97 +1,95 @@
 name: ci-cd
 
-# run the action on pull_requests and pushes
-on: push
+on: [push, pull_request]
 
 jobs:
-  # first job to test the application using pytest
+  # run the unit tests
   unittest:
-    runs-on: ubuntu-latest # choose the OS for running the action
-    # define the individual sequential steps to be run
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Setup python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.8
+          python-version: "3.11"
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Run pytest
-        run: |
-          pytest
+        run: pytest
 
+  # measure coverage on every Python version and OS combination
   codecoverage:
-    runs-on: ${{ matrix.OS }} # choose the OS for running the action
+    runs-on: ${{ matrix.os }}
     strategy:
-      matrix: 
-        python: ['3.7', '3.8', '3.9']
-        OS: ['ubuntu-latest', 'windows-latest']
-    env:
-      PYTHON: ${{ matrix.python }}
-    # define the individual sequential steps to be run
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+        os: [ubuntu-latest, windows-latest]
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Setup python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Generate coverage report
-        run: |
-          pip install pytest-cov
-          pytest --cov=./
+        run: pytest --cov=main --cov=ml_utils --cov-report=xml --cov-fail-under=95
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v1
+        uses: codecov/codecov-action@v5
         with:
-          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
+  # build the image and scan it for known vulnerabilities
   container-security:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-      - name: build local container
-        uses: docker/build-push-action@v2
+        uses: docker/setup-buildx-action@v3
+      - name: Build local container
+        uses: docker/build-push-action@v6
         with:
           tags: localbuild/testimage:latest
           context: .
           push: false
           load: true
       - name: Scan image
-        uses: anchore/scan-action@v3
+        id: scan
+        uses: anchore/scan-action@v6
         with:
           image: "localbuild/testimage:latest"
           fail-build: false
           severity-cutoff: medium
-      - name: Upload artifact
-        uses: actions/upload-artifact@v1.0.0
+      - name: Summarize the report
+        run: |
+          pip install matplotlib
+          cp ${{ steps.scan.outputs.sarif }} reports/results.sarif
+          python reports/sarif_summary.py reports/results.sarif
+          cat reports/SARIF_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload SARIF report and summary
+        uses: actions/upload-artifact@v4
         with:
-          name: SARIF report
-          path: ./results.sarif
-  
+          name: sarif-report
+          path: |
+            reports/results.sarif
+            reports/SARIF_SUMMARY.md
+            reports/sarif-severity.png
+
+  # package the code once tests, coverage and the security scan have passed
   upload_zip:
-    runs-on: ubuntu-latest # choose the OS for running the action
-    needs: 
-      - unittest
-      - codecoverage
-      - container-security
-    
-    # define the individual sequential steps to be run
+    runs-on: ubuntu-latest
+    needs: [unittest, codecoverage, container-security]
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Zip the code
-        run: |
-          zip -r release.zip . -x ".git/*" ".github/*" ".gitignore"
+        run: zip -r release.zip . -x ".git/*" ".github/*" ".gitignore"
       - name: Upload artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: code-release
           path: release.zip

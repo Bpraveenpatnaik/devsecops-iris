@@ -1,36 +1,41 @@
+from contextlib import asynccontextmanager
+from typing import List, Literal
+
 import uvicorn
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
 from ml_utils import load_model, predict, retrain
-from typing import List
+
+
+# train the model on startup and keep it loaded for prediction
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    load_model()
+    yield
+
 
 # defining the main app
-app = FastAPI(title="Iris Predictor", docs_url="/")
+app = FastAPI(title="Iris Predictor", docs_url="/", lifespan=lifespan)
 
-# calling the load_model during startup.
-# this will train the model and keep it loaded for prediction.
-app.add_event_handler("startup", load_model)
+FlowerClass = Literal["Iris Setosa", "Iris Versicolour", "Iris Virginica"]
 
 # class which is expected in the payload
 class QueryIn(BaseModel):
-    sepal_length: float
-    sepal_width: float
-    petal_length: float
-    petal_width: float
+    sepal_length: float = Field(gt=0)
+    sepal_width: float = Field(gt=0)
+    petal_length: float = Field(gt=0)
+    petal_width: float = Field(gt=0)
 
 
 # class which is returned in the response
 class QueryOut(BaseModel):
-    flower_class: str
+    flower_class: FlowerClass
 
 
 # class which is expected in the payload while re-training
-class FeedbackIn(BaseModel):
-    sepal_length: float
-    sepal_width: float
-    petal_length: float
-    petal_width: float
-    flower_class: str
+class FeedbackIn(QueryIn):
+    flower_class: FlowerClass
 
 
 # Route definitions

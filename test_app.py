@@ -1,26 +1,65 @@
+import pytest
 from fastapi.testclient import TestClient
+
+import ml_utils
 from main import app
 
+
+@pytest.fixture
+def client():
+    # entering the context runs the startup event, which trains the model
+    with TestClient(app) as c:
+        yield c
+
+
 # test to check the correct functioning of the /ping route
-def test_ping():
-    with TestClient(app) as client:
-        response = client.get("/ping")
-        # asserting the correct response is received
-        assert response.status_code == 200
-        assert response.json() == {"ping": "pong"}
+def test_ping(client):
+    response = client.get("/ping")
+    assert response.status_code == 200
+    assert response.json() == {"ping": "pong"}
 
 
-# test to check if Iris Virginica is classified correctly
-def test_pred_virginica():
-    # defining a sample payload for the testcase
-    payload = {
-        "sepal_length": 3,
-        "sepal_width": 5,
-        "petal_length": 3.2,
-        "petal_width": 4.4,
-    }
-    with TestClient(app) as client:
-        response = client.post("/predict_flower", json=payload)
-        # asserting the correct response is received
-        assert response.status_code == 200
-        assert response.json() == {"flower_class": "Iris Virginica"}
+# one typical flower of each species should be classified correctly
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        ({"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}, "Iris Setosa"),
+        ({"sepal_length": 6.0, "sepal_width": 2.9, "petal_length": 4.5, "petal_width": 1.5}, "Iris Versicolour"),
+        ({"sepal_length": 6.9, "sepal_width": 3.1, "petal_length": 5.8, "petal_width": 2.3}, "Iris Virginica"),
+    ],
+)
+def test_predicts_each_class(client, payload, expected):
+    response = client.post("/predict_flower", json=payload)
+    assert response.status_code == 200
+    assert response.json() == {"flower_class": expected}
+
+
+# the original template test: an unusual flower that the model labels Virginica
+def test_pred_virginica(client):
+    payload = {"sepal_length": 3, "sepal_width": 5, "petal_length": 3.2, "petal_width": 4.4}
+    response = client.post("/predict_flower", json=payload)
+    assert response.status_code == 200
+    assert response.json() == {"flower_class": "Iris Virginica"}
+
+
+def test_model_accuracy():
+    assert ml_utils.load_model() > 0.9
+
+
+# feedback must add to what the model knows, not replace it
+def test_feedback_loop_keeps_previous_knowledge(client):
+    feedback = [{"sepal_length": 6.9, "sepal_width": 3.1, "petal_length": 5.8, "petal_width": 2.3,
+                 "flower_class": "Iris Virginica"}]
+    response = client.post("/feedback_loop", json=feedback)
+    assert response.status_code == 200
+    assert response.json() == {"detail": "Feedback loop successful"}
+    setosa = {"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}
+    assert client.post("/predict_flower", json=setosa).json() == {"flower_class": "Iris Setosa"}
+
+
+def test_rejects_invalid_input(client):
+    bad = {"sepal_length": -1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}
+    assert client.post("/predict_flower", json=bad).status_code == 422
+    unknown = {"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2,
+               "flower_class": "Rose"}
+    assert client.post("/feedback_loop", json=[unknown]).status_code == 422
