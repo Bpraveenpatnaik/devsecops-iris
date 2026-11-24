@@ -8,12 +8,28 @@ Started from the [PGCSEDS-IIITH/devsecops-iris](https://github.com/PGCSEDS-IIITH
 
 ## Pipeline
 
+```mermaid
+flowchart LR
+    trigger(["push or pull request"])
+    unittest["unittest<br/>pytest"]
+    cov["codecoverage<br/>Python 3.10–3.12 × Ubuntu, Windows<br/>fails below 95%"]
+    sec["container-security<br/>build → Grype scan → SARIF report"]
+    release["upload_zip<br/>runs only after all 3 pass"]
+    codecov[("Codecov")]
+    sarif[["SARIF report + severity chart"]]
+
+    trigger --> unittest
+    trigger --> cov
+    trigger --> sec
+    cov -- "uploads coverage" --> codecov
+    sec -- "uploads artifact" --> sarif
+    unittest --> release
+    cov --> release
+    sec --> release
+
+    linkStyle 5,6,7 stroke:#2f6fdb,stroke-width:2px
 ```
-push ──► unittest ─────────────┐
-     ├─► codecoverage (py3.10/3.11/3.12 × ubuntu/windows) ─► Codecov
-     ├─► container-security (Buildx ► Anchore/Grype scan ► SARIF report + summary)
-     └───────────────────────────► upload_zip (only after all 3 pass) ► release.zip
-```
+The three checks run in parallel; the highlighted edges are the release gate.
 
 | Job | What it does |
 |---|---|
